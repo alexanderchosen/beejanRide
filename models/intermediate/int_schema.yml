@@ -1,0 +1,506 @@
+version: 2
+
+models:
+
+  # -------------------------------------------------------------------------
+  # TRIPS_METRICS
+  # Grain: 1 row per trip
+  # -------------------------------------------------------------------------
+  - name: trips_metrics
+    description: >
+      Trip-level enriched model containing duration, revenue, fraud flags,
+      and payment integrity flags. Incremental on updated_at.
+      net_revenue can be negative when fee > amount — this is intentional
+      and flagged explicitly via invalid_payment_amount_flag for fraud investigation.
+    columns:
+      - name: trip_id
+        description: "Primary key — one row per trip"
+        data_tests:
+          - not_null
+          - unique
+
+      - name: rider_id
+        description: "FK to stg_riders"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: rider_id
+                to: ref('stg_riders')
+
+      - name: driver_id
+        description: "FK to stg_drivers"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: driver_id
+                to: ref('stg_drivers')
+
+      - name: city_id
+        description: "FK to stg_cities"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('stg_cities')
+
+      - name: status
+        description: "Trip status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['requested', 'accepted', 'completed', 'cancelled', 'no_show']
+
+      - name: payment_status
+        description: >
+          Payment status from stg_payments via LEFT JOIN.
+          Intentionally nullable — legitimate null scenarios include:
+          (1) cancelled/no_show trips where no payment is ever initiated,
+          (2) cash payments that generate no digital payment record,
+          (3) payment gateway timeouts before a record is written,
+          (4) Airbyte pipeline lag where the payment row has not yet landed.
+          Use missing_payment_flag = 1 to identify and investigate these cases.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['success', 'failed']
+
+      - name: payment_provider
+        description: >
+          Payment provider — nullable for the same reasons as payment_status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['stripe', 'paypal']
+
+      - name: trip_duration_minutes
+        description: "Duration in minutes — 0 for cancelled/no_show trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: surge_multiplier
+        description: "Surge multiplier applied to this trip"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 1"
+
+      - name: amount
+        description: "Gross payment amount — 0 if no payment record exists"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: fee
+        description: "Payment processing fee — 0 if no payment record exists"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: net_revenue
+        description: >
+          Net revenue after fee deduction (amount - fee via calculate_net_revenue macro).
+          0 if no payment record exists.
+          Can be negative if fee > amount — this indicates data corruption or fee
+          manipulation and is flagged via invalid_payment_amount_flag = 1.
+          Do NOT apply >= 0 test here — negative values are intentionally preserved
+          as fraud evidence and surfaced by the no_negative_revenue custom test.
+        data_tests:
+          - not_null
+
+      - name: corporate_trip_flag
+        description: "1 if corporate trip, 0 otherwise"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: missing_payment_flag
+        description: "1 if no payment record found for this trip"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: duplicate_payment_flag
+        description: >
+          1 if more than one payment record exists for this trip.
+          Computed on raw stg_payments before deduplication via
+          duplicate_payment_flag macro (window function).
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: invalid_payment_amount_flag
+        description: >
+          1 if fee > amount on the payment record.
+          Mathematically impossible in legitimate Stripe/PayPal transactions.
+          Treated as a fraud signal — value preserved in net_revenue (not floored).
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: failed_payment_on_completed_trip_flag
+        description: >
+          1 if trip status is completed but payment was not successful.
+          Null-safe: missing payment_status is treated as non-success.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: extreme_surge_flag
+        description: "1 if surge multiplier exceeded 10 — anomaly/fraud indicator"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: requested_at
+        description: "Timestamp when trip was requested"
+        data_tests:
+          - not_null
+
+      - name: updated_at
+        description: "Timestamp of last update — used as incremental cursor"
+        data_tests:
+          - not_null
+
+    # Model-level tests
+    # data_tests:
+      # - no_negative_revenue
+      # - trip_duration_positive
+      # - completed_trip_must_have_successful_payment
+      # - dbt_utils.recency:
+      #     arguments:
+      #       datepart: hour
+      #       field: updated_at
+      #       interval: 2
+
+
+  # -------------------------------------------------------------------------
+  # DRIVER_METRICS
+  # Grain: 1 row per driver including drivers with zero trips
+  # -------------------------------------------------------------------------
+  - name: driver_metrics
+    description: >
+      Driver-level aggregated metrics including lifetime trips, cancellation
+      rates, net revenue, online hours, productivity and payment integrity signals.
+      Rate and average columns are intentionally null for drivers with no
+      trip history — null means no data, not zero performance.
+    columns:
+      - name: driver_id
+        description: "Primary key — one row per driver"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: driver_id
+                to: ref('stg_drivers')
+
+      - name: city_id
+        description: "FK to stg_cities"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('stg_cities')
+
+      - name: driver_status
+        description: "Current driver status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active', 'suspended', 'inactive']
+
+      - name: driver_lifetime_trips
+        description: "Total completed trips — 0 for new drivers"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: cancelled_trips
+        description: "Count of cancelled trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: no_show_trips
+        description: "Count of no_show trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_trip_attempts
+        description: "All trips regardless of status"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_net_revenue_earned
+        description: >
+          Sum of net_revenue on completed trips — 0 for new drivers.
+          Uses macro-computed net_revenue from trips_metrics, not gross fare.
+        data_tests:
+          - not_null
+
+      - name: extreme_surge_trips
+        description: "Count of trips with extreme surge multiplier (> 10)"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: corporate_trips
+        description: "Count of completed corporate trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: failed_payment_count
+        description: "Count of completed trips with failed or missing payments"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: missing_payment_count
+        description: "Count of trips with no payment record found"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: duplicate_payment_count
+        description: "Count of trips with more than one payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: invalid_payment_amount_count
+        description: >
+          Count of trips where fee > amount — fraud/data corruption signal.
+          Mirrors invalid_payment_amount_flag from trips_metrics at driver grain.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_online_hours
+        description: "Total hours driver was online — 0 if never logged on"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      # Rate and average columns: documented only, no tests
+      # null = no data yet (new driver), not zero performance
+      - name: avg_net_revenue_per_trip
+        description: "Average net revenue per completed trip — null for new drivers"
+
+      - name: avg_surge_multiplier
+        description: "Average surge multiplier on completed trips — null for new drivers"
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of total attempts — null for new drivers"
+
+      - name: cancellation_rate_pct
+        description: "Cancelled trips as % of total attempts — null for new drivers"
+
+      - name: trips_per_online_hour
+        description: "Completed trips per hour online — null if never logged on"
+
+
+  # -------------------------------------------------------------------------
+  # RIDER_METRICS
+  # Grain: 1 row per rider including riders with zero trips
+  # -------------------------------------------------------------------------
+  - name: rider_metrics
+    description: >
+      Rider-level aggregated metrics including total trips, completed trips,
+      lifetime value and payment integrity signals.
+      Rate and average columns are intentionally null for riders with no
+      trip history — null means no data, not zero performance.
+    columns:
+      - name: rider_id
+        description: "Primary key — one row per rider"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: rider_id
+                to: ref('stg_riders')
+
+      - name: country
+        description: "Country of rider — UK only for this project"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UK']
+
+      - name: signup_date
+        description: "Date rider signed up"
+        data_tests:
+          - not_null
+
+      - name: most_frequent_city_id
+        description: >
+          City where the rider has taken the most completed trips.
+          Derived from trips_metrics — null for riders with zero completed trips.
+          Used for city-level profitability attribution in marts without re-joining.
+        data_tests:
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('stg_cities')
+
+      - name: is_referred_rider
+        description: "True if rider signed up via a referral code"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: total_trips
+        description: "All trip attempts regardless of status"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: completed_trips
+        description: "Count of completed trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: cancelled_trips
+        description: "Count of cancelled trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: no_show_trips
+        description: "Count of no_show trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: rider_lifetime_value
+        description: "Sum of net_revenue on completed trips — 0 for new riders"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: missing_payment_count
+        description: "Count of trips with no payment record found"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: duplicate_payment_count
+        description: "Count of trips with more than one payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: failed_payment_on_completed_count
+        description: "Count of completed trips with failed or missing payments"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: invalid_payment_amount_count
+        description: >
+          Count of trips where fee > amount — fraud/data corruption signal.
+          Mirrors invalid_payment_amount_flag from trips_metrics at rider grain.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: extreme_surge_trips
+        description: "Count of trips with extreme surge multiplier (> 10)"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: corporate_trips
+        description: "Count of corporate trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      # Rate and average columns: documented only, no tests
+      # null = no data yet (new rider), not zero performance
+      - name: avg_spend_per_trip
+        description: "Average net revenue per completed trip — null for new riders"
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of (completed + cancelled) — null for new riders"
+
+      - name: cancellation_rate_pct
+        description: "Cancelled trips as % of (completed + cancelled) — null for new riders"

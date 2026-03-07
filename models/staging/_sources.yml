@@ -1,0 +1,41 @@
+version: 2
+sources:
+    - name: beejanride
+      description: Raw Postgres data ingested via Airbyte
+      database: beejanride-488715
+      schema: beejanride_488715_beejanRide_dataset
+      tables:
+          - name: cities_raw
+            description: record of cities covered by beejan ride
+
+          - name: drivers_raw
+            description: detailed record of drivers
+
+          - name: driver_status_events_raw
+            description: One record per status, Includes event_id, driver_id and event_timestamp.
+            config:
+              loaded_at_field: _airbyte_extracted_at
+              freshness:
+                warn_after: {count: 1, period: hour}
+                error_after: {count: 2, period: hour}
+
+
+
+          - name: payments_raw
+            description: "records of payments made for rides"
+            config:
+              loaded_at_field: _airbyte_extracted_at
+              freshness:
+                warn_after: {count: 1, period: hour}
+                error_after: {count: 2, period: hour}
+
+          - name: riders_raw
+            description: details of riders going on a trip
+
+          - name: trips_raw
+            description: "record of each trip made by riders and drivers"
+            config:
+              loaded_at_field: _airbyte_extracted_at
+              freshness:
+                warn_after: {count: 1, period: hour}
+                error_after: {count: 2, period: hour}
