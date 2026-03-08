@@ -23,20 +23,25 @@
 --   Fraud monitoring view       → extreme_surge_flag, duplicate_payment_flag,
 --                                  missing_payment_flag, invalid_payment_amount_flag
 
+{{ config(
+    materialized='incremental',
+    unique_key='trip_id',
+    incremental_strategy='merge'
+) }}
 
 with trips as (
     select *
     from {{ ref('stg_trips') }}
 
---    {% if is_incremental() %}
+    {% if is_incremental() %}
         -- Use updated_at to catch both new trips and status changes on existing trips
         -- Guarded against null updated_at using coalesce fallback to requested_at
         -- Note: is_incremental() guard prevents this filter running on first full load,
         -- which would cause (col > null = false) and load zero rows
-  --      where coalesce(updated_at, requested_at) > (
---         select max(coalesce(updated_at, requested_at)) from {{ this }}
-  --      )
-   -- {% endif %}
+        where coalesce(updated_at, requested_at) > (
+         select max(coalesce(updated_at, requested_at)) from {{ this }}
+        )
+   {% endif %}
 
 ),
 
