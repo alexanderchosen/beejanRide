@@ -35,7 +35,7 @@ select
     case
         when coalesce(m.driver_lifetime_trips, 0) = 0  then 'Level 0'
         when coalesce(m.driver_lifetime_trips, 0) <= 1  then 'Level 1'
-        when coalesce(m.driver_lifetime_trips, 0) <= 5  then 'Level 2'
+        when coalesce(m.driver_lifetime_trips, 0) <= 3  then 'Level 2'
         else 'Level 3'
     end as driver_level,
 

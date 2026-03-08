@@ -1,0 +1,228 @@
+version: 2
+
+models:
+
+  # -------------------------------------------------------------------------
+  # MART_DRIVER_LEADERBOARD
+  # Grain: 1 row per driver
+  # -------------------------------------------------------------------------
+  - name: mart_driver_leaderboard
+    description: >
+      Driver performance leaderboard for the operations team.
+      Ranks all drivers within their assigned city across four dimensions:
+      trip volume, revenue, completion rate, and rating.
+      Materialised as a full table refresh — rankings require the complete
+      driver population to be meaningful. Incremental ranking would produce
+      incorrect rank values since rank() is a window function.
+      New drivers with no trips receive null ranks — rank not meaningful yet.
+    meta:
+      owner: operations-team
+      tags: ['operations']
+    columns:
+      - name: driver_id
+        description: "Primary key — one row per driver"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: driver_id
+                to: ref('dim_drivers')
+
+      - name: city_id
+        description: "FK to dim_cities"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: city_name
+        description: "City display name — joined from dim_cities"
+        data_tests:
+          - not_null
+
+      - name: driver_status
+        description: "Current driver status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active', 'suspended', 'inactive']
+
+      - name: driver_level
+        description: >
+          Segmentation based on lifetime completed trips:
+          Level 0 (0), Level 1 (1), Level 2 (1-3), Level 3 (3+).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Level 0', 'Level 1', 'Level 2', 'Level 3']
+
+      - name: driver_lifetime_trips
+        description: "Total completed trips — 0 for new drivers"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_net_revenue_earned
+        description: "Cumulative net revenue from completed trips"
+        data_tests:
+          - not_null
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of total attempts — null for new drivers"
+
+      - name: cancellation_rate_pct
+        description: "Cancelled trips as % of total attempts — null for new drivers"
+
+      - name: total_online_hours
+        description: "Total hours online — 0 if never logged on"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: trips_per_online_hour
+        description: "Completed trips per online hour — null if never logged on"
+
+      - name: total_payment_issues
+        description: >
+          Sum of failed + missing + duplicate + invalid payment counts.
+          Composite reliability signal — higher = more payment problems.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: city_trip_volume_rank
+        description: >
+          Rank within city by driver_lifetime_trips (1 = most trips).
+          Null for drivers with zero trips.
+
+      - name: city_revenue_rank
+        description: >
+          Rank within city by total_net_revenue_earned (1 = highest revenue).
+          Null for drivers with zero trips.
+
+      - name: city_completion_rank
+        description: >
+          Rank within city by completion_rate_pct (1 = highest completion rate).
+          Null for drivers with no trip attempts.
+
+      - name: city_rating_rank
+        description: >
+          Rank within city by rating (1 = highest rated).
+          Null for unrated drivers.
+
+
+  # -------------------------------------------------------------------------
+  # MART_RIDER_LTV
+  # Grain: 1 row per rider
+  # -------------------------------------------------------------------------
+  - name: mart_rider_ltv
+    description: >
+      Rider lifetime value analysis for the operations team.
+      Segments riders by LTV percentile, acquisition cohort (referred vs organic),
+      and rider tier to support retention decisions and referral programme evaluation.
+      ltv_per_day normalises lifetime value by rider tenure so high-spending
+      newer riders rank appropriately against long-tenured lower-spending riders.
+      Materialised as a full table refresh — percentile calculations require
+      the complete rider population.
+    meta:
+      owner: operations-team
+      tags: ['operations']
+    columns:
+      - name: rider_id
+        description: "Primary key — one row per rider"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: rider_id
+                to: ref('dim_riders')
+
+      - name: rider_level
+        description: >
+          Segmentation based on completed trips:
+          new (0), occasional (1), regular (1-3), frequent (3+).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'occasional', 'regular', 'frequent']
+
+      - name: is_referred_rider
+        description: "True if rider signed up via a referral code"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: acquisition_cohort
+        description: "referred or organic — derived from is_referred_rider for readability"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['referred', 'organic']
+
+      - name: rider_lifetime_value
+        description: >
+          Business metric definition: cumulative net_revenue from all completed
+          trips by this rider. net_revenue = payment amount - processing fee.
+          0 for new riders with no completed trips.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: ltv_per_day
+        description: >
+          rider_lifetime_value divided by days_since_signup.
+          Tenure-normalised LTV — allows fair comparison between a rider who
+          signed up last week vs one who signed up 2 years ago.
+          Null if days_since_signup = 0.
+
+      - name: ltv_percentile
+        description: >
+          Rider's position in the global LTV distribution (0 to 1).
+          Computed via percent_rank() over the full rider population.
+          0 = lowest LTV, 1 = highest LTV.
+
+      - name: ltv_segment
+        description: >
+          LTV segment derived from ltv_percentile:
+          top_10_pct (>= 0.9), top_25_pct (>= 0.75),
+          above_median (>= 0.5), below_median (< 0.5).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['top_10_pct', 'top_25_pct', 'above_median', 'below_median']
+
+      - name: most_frequent_city_id
+        description: "City where rider takes most trips — null for new riders"
+
+      - name: most_frequent_city_name
+        description: "City name for most_frequent_city_id — null for new riders"
+
+      - name: total_payment_issues
+        description: >
+          Sum of all payment integrity flags at rider grain.
+          High values indicate riders with persistent payment problems.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"

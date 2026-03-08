@@ -1,0 +1,190 @@
+version: 2
+
+models:
+
+  # -------------------------------------------------------------------------
+  # MART_DAILY_REVENUE
+  # Grain: 1 row per city per day
+  # -------------------------------------------------------------------------
+  - name: mart_daily_revenue
+    description: >
+      Daily revenue time-series aggregated by city for the finance dashboard.
+      Pre-aggregates fct_trips to date + city grain so dashboard tools hit
+      a small flat table rather than scanning the full trip history.
+      Incremental by trip_date — new days append without reprocessing history.
+      Merge strategy handles retrospective trip updates (e.g. disputed payment
+      resolved the day after the trip).
+    meta:
+      owner: finance-team
+      tags: ['finance']
+    columns:
+      - name: trip_date
+        description: "Date of trips — part of composite primary key"
+        data_tests:
+          - not_null
+
+      - name: city_id
+        description: "FK to dim_cities — part of composite primary key"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: city_name
+        description: "City display name — joined from dim_cities"
+        data_tests:
+          - not_null
+
+      - name: total_trips
+        description: "All trip attempts on this date in this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: completed_trips
+        description: "Completed trips on this date in this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_net_revenue
+        description: >
+          Sum of net_revenue on completed trips for this date and city.
+          Business metric definition: net_revenue = payment amount - processing fee.
+          Computed via calculate_net_revenue macro in trips_metrics.
+        data_tests:
+          - not_null
+
+      - name: avg_net_revenue_per_trip
+        description: "Average net revenue per completed trip — null if no completed trips"
+
+      - name: corporate_net_revenue
+        description: "Net revenue from corporate trips only"
+        data_tests:
+          - not_null
+
+      - name: consumer_net_revenue
+        description: "Net revenue from non-corporate (consumer) trips only"
+        data_tests:
+          - not_null
+
+      - name: daily_completion_rate_pct
+        description: "Completed trips as % of total trips on this date — null if no trips"
+
+      - name: missing_payment_trips
+        description: "Count of trips with no payment record — finance investigation signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: failed_payment_on_completed_trips
+        description: "Count of completed trips where payment failed — revenue at risk"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+
+  # -------------------------------------------------------------------------
+  # MART_CITY_PROFITABILITY
+  # Grain: 1 row per city
+  # -------------------------------------------------------------------------
+  - name: mart_city_profitability
+    description: >
+      City-level profitability for strategic planning and investment decisions.
+      Aggregates full trip history per city and normalises revenue by city
+      maturity (days_since_launch) so newer cities can be benchmarked fairly
+      against established ones.
+      Includes driver supply metrics alongside demand metrics for a complete
+      picture of city-level unit economics.
+    meta:
+      owner: finance-team
+      tags: ['finance']
+    columns:
+      - name: city_id
+        description: "Primary key — one row per city"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: city_name
+        description: "City display name"
+        data_tests:
+          - not_null
+
+      - name: days_since_launch
+        description: "Days since city launched — used for maturity normalisation"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_net_revenue
+        description: >
+          Cumulative net revenue from all completed trips in this city.
+          Business metric definition: net_revenue = payment amount - processing fee.
+        data_tests:
+          - not_null
+
+      - name: revenue_per_day_since_launch
+        description: >
+          Total net revenue divided by days_since_launch.
+          Maturity-normalised revenue metric — allows fair comparison between
+          a city launched 2 months ago and one running for 2 years.
+          Null if days_since_launch = 0 (city launched today).
+
+      - name: total_drivers
+        description: "Total drivers assigned to this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: active_drivers
+        description: "Drivers with status = active in this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: trips_per_driver_online_hour
+        description: >
+          Completed trips per total driver online hours in this city.
+          Efficiency metric — higher = better driver utilisation.
+          Null if total driver online hours = 0.
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of total trip attempts in this city"
+
+      - name: missing_payment_trips
+        description: "Count of trips with no payment record in this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: failed_payment_trips
+        description: "Count of completed trips with failed payments in this city"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+                

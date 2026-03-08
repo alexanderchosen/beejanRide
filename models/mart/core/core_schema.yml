@@ -1,0 +1,567 @@
+version: 2
+
+models:
+
+  # -------------------------------------------------------------------------
+  # DIM_CITIES
+  # Grain: 1 row per city
+  # -------------------------------------------------------------------------
+  - name: dim_cities
+    description: >
+      City dimension table. Reference data for all 5 UK cities beejanRide
+      operates in. Used as the primary FK target for city_id across all
+      fact and mart tables. Includes days_since_launch for maturity-normalised
+      revenue comparisons in mart_city_profitability.
+    meta:
+      owner: data-engineering
+      tags: ['core']
+    columns:
+      - name: city_id
+        description: "Primary key — one row per city"
+        data_tests:
+          - not_null
+          - unique
+
+      - name: city_name
+        description: "Display name of the city"
+        data_tests:
+          - not_null
+
+      - name: country
+        description: "Country — UK only for this project"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UK']
+
+      - name: launch_date
+        description: "Date the city was launched on the beejanRide platform"
+        data_tests:
+          - not_null
+
+      - name: days_since_launch
+        description: >
+          Derived: number of days between launch_date and today.
+          Used in mart_city_profitability to normalise revenue by city maturity
+          so newer cities are benchmarked fairly against established ones.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+
+  # -------------------------------------------------------------------------
+  # DIM_DRIVERS
+  # Grain: 1 row per driver (current state — Type 1 SCD)
+  # -------------------------------------------------------------------------
+  - name: dim_drivers
+    description: >
+      Driver dimension table showing current state of all drivers.
+      Enriched with aggregated performance metrics from driver_metrics
+      for direct consumption by mart models and BI tools.
+      Historical state changes are tracked separately in drivers_snapshot (SCD Type 2).
+      Rating is intentionally nullable — null means unrated new driver,
+      not a zero-rated poor driver.
+    meta:
+      owner: operations-team
+      tags: ['core', 'operations']
+    columns:
+      - name: driver_id
+        description: "Primary key — one row per driver"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: driver_id
+                to: ref('stg_drivers')
+
+      - name: city_id
+        description: "FK to dim_cities — city the driver is assigned to"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: vehicle_id
+        description: "Current vehicle assigned to driver — string identifier e.g. VH001"
+        data_tests:
+          - not_null
+
+      - name: driver_status
+        description: "Current driver status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['active', 'suspended', 'inactive']
+
+      - name: rating
+        description: "Current driver rating — null for new unrated drivers"
+
+      - name: onboarding_date
+        description: "Date driver was onboarded onto the platform"
+        data_tests:
+          - not_null
+
+      - name: days_since_onboarding
+        description: "Derived: days between onboarding_date and today — driver tenure signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: driver_level
+        description: >
+          Derived segmentation based on driver_lifetime_trips:
+          Level 0 (0 trips), level 1 (1), Level 2 (1-3), Level 3 (3+).
+          Computed once in dim_drivers so downstream marts read the column
+          rather than reimplementing thresholds independently.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Level 0', 'Level 1', 'Level 2', 'Level 3']
+
+      - name: driver_lifetime_trips
+        description: "Total completed trips — 0 for new drivers"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: total_net_revenue_earned
+        description: "Cumulative net revenue from completed trips — 0 for new drivers"
+        data_tests:
+          - not_null
+
+      - name: total_online_hours
+        description: "Total hours driver has been online — 0 if never logged on"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of total attempts — null for new drivers"
+
+      - name: cancellation_rate_pct
+        description: "Cancelled trips as % of total attempts — null for new drivers"
+
+      - name: trips_per_online_hour
+        description: "Completed trips per hour online — null if never logged on"
+
+      - name: avg_net_revenue_per_trip
+        description: "Average net revenue per completed trip — null for new drivers"
+
+      - name: failed_payment_count
+        description: "Lifetime count of completed trips with failed payments"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: missing_payment_count
+        description: "Lifetime count of trips with no payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: duplicate_payment_count
+        description: "Lifetime count of trips with more than one payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: invalid_payment_amount_count
+        description: "Lifetime count of trips where fee > amount — fraud signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+
+  # -------------------------------------------------------------------------
+  # DIM_RIDERS
+  # Grain: 1 row per rider (current state — Type 1 SCD)
+  # -------------------------------------------------------------------------
+  - name: dim_riders
+    description: >
+      Rider dimension table showing current state of all riders.
+      Enriched with aggregated behaviour metrics from rider_metrics.
+      Rider attributes (country, referral status) are immutable after signup
+      so no snapshot is required for riders.
+      Rate and average columns are null for riders with no trip history —
+      null means no data yet, not zero performance.
+    meta:
+      owner: operations-team
+      tags: ['core', 'operations']
+    columns:
+      - name: rider_id
+        description: "Primary key — one row per rider"
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                field: rider_id
+                to: ref('stg_riders')
+
+      - name: country
+        description: "Country of rider — UK only"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UK']
+
+      - name: signup_date
+        description: "Date rider signed up to the platform"
+        data_tests:
+          - not_null
+
+      - name: days_since_signup
+        description: "Derived: days between signup_date and today — rider tenure signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: is_referred_rider
+        description: "True if rider signed up via a referral code"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: rider_level
+        description: >
+          Derived segmentation based on completed_trips:
+          new (0 trips), occasional (1), regular (1-3), frequent (3+).
+          Computed once in dim_riders for consistent downstream consumption.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'occasional', 'regular', 'frequent']
+
+      - name: most_frequent_city_id
+        description: >
+          City where the rider has taken the most completed trips.
+          Null for riders with zero completed trips.
+        data_tests:
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: rider_lifetime_value
+        description: "Cumulative net revenue from completed trips — 0 for new riders"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: avg_spend_per_trip
+        description: "Average net revenue per completed trip — null for new riders"
+
+      - name: completion_rate_pct
+        description: "Completed trips as % of (completed + cancelled) — null for new riders"
+
+      - name: cancellation_rate_pct
+        description: "Cancelled trips as % of (completed + cancelled) — null for new riders"
+
+      - name: missing_payment_count
+        description: "Lifetime count of trips with no payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: duplicate_payment_count
+        description: "Lifetime count of trips with more than one payment record"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: failed_payment_on_completed_count
+        description: "Lifetime count of completed trips with failed payments"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: invalid_payment_amount_count
+        description: "Lifetime count of trips where fee > amount — fraud signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+
+  # -------------------------------------------------------------------------
+  # FCT_TRIPS
+  # Grain: 1 row per trip
+  # -------------------------------------------------------------------------
+  - name: fct_trips
+    description: >
+      Central trip fact table. One row per trip containing all measures,
+      fraud flags, and FK references to dimension tables.
+      Incremental on coalesce(updated_at, requested_at) with merge strategy
+      to handle both new trips and status changes on existing trips.
+      net_revenue can be negative when fee > amount — preserved intentionally
+      as a fraud signal via invalid_payment_amount_flag.
+      All flag columns are 0/1 integers, never null.
+    meta:
+      owner: data-engineering
+      tags: ['core', 'finance', 'fraud']
+    columns:
+      - name: trip_id
+        description: "Primary key — one row per trip"
+        data_tests:
+          - not_null
+          - unique
+
+      - name: driver_id
+        description: "FK to dim_drivers"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: driver_id
+                to: ref('dim_drivers')
+
+      - name: rider_id
+        description: "FK to dim_riders"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: rider_id
+                to: ref('dim_riders')
+
+      - name: city_id
+        description: "FK to dim_cities"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: city_id
+                to: ref('dim_cities')
+
+      - name: trip_date
+        description: "Date of trip extracted from requested_at — used for time-series grouping"
+        data_tests:
+          - not_null
+
+      - name: status
+        description: "Trip status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['requested', 'accepted', 'completed', 'cancelled', 'no_show']
+
+      - name: net_revenue
+        description: >
+          Net revenue after fee deduction (amount - fee).
+          Can be negative when fee > amount — preserved as fraud evidence.
+          Revenue reporting should filter on status = 'completed'.
+        data_tests:
+          - not_null
+
+      - name: trip_duration_minutes
+        description: "Trip duration in minutes — 0 for cancelled/no_show trips"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: surge_multiplier
+        description: "Surge multiplier applied to this trip — minimum 1"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 1"
+
+      - name: corporate_trip_flag
+        description: "1 if corporate trip, 0 otherwise"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: missing_payment_flag
+        description: "1 if no payment record found for this trip"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: duplicate_payment_flag
+        description: "1 if more than one payment record exists for this trip"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: invalid_payment_amount_flag
+        description: "1 if fee > amount — fraud/data corruption signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: failed_payment_on_completed_trip_flag
+        description: "1 if trip is completed but payment was not successful"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: extreme_surge_flag
+        description: "1 if surge_multiplier > 10 — anomaly/fraud indicator"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: requested_at
+        description: "Timestamp when trip was requested"
+        data_tests:
+          - not_null
+
+      - name: updated_at
+        description: "Timestamp of last update — used as incremental cursor"
+        data_tests:
+          - not_null
+
+
+  # -------------------------------------------------------------------------
+  # FCT_PAYMENTS
+  # Grain: 1 row per payment event (not deduplicated)
+  # -------------------------------------------------------------------------
+  - name: fct_payments
+    description: >
+      Payment event fact table. One row per raw payment event including
+      duplicates and failures — intentionally not deduplicated.
+      trips_metrics handles deduplication at trip grain for revenue purposes.
+      This model preserves every payment attempt for payment reliability
+      and fraud investigation. No net_revenue column — revenue reporting
+      belongs exclusively at trip grain in fct_trips.
+    meta:
+      owner: data-engineering
+      tags: ['core', 'fraud']
+    columns:
+      - name: payment_id
+        description: "Primary key — one row per payment event"
+        data_tests:
+          - not_null
+          - unique
+
+      - name: trip_id
+        description: "FK to fct_trips"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                field: trip_id
+                to: ref('fct_trips')
+
+      - name: driver_id
+        description: "FK to dim_drivers — inherited from fct_trips"
+        data_tests:
+          - not_null
+
+      - name: rider_id
+        description: "FK to dim_riders — inherited from fct_trips"
+        data_tests:
+          - not_null
+
+      - name: city_id
+        description: "FK to dim_cities — inherited from fct_trips"
+        data_tests:
+          - not_null
+
+      - name: payment_status
+        description: "Payment status"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['success', 'failed']
+
+      - name: payment_provider
+        description: "Payment provider"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['stripe', 'paypal']
+
+      - name: amount
+        description: "Charged amount"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: fee
+        description: "Processing fee"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: invalid_amount_flag
+        description: "1 if fee > amount — fraud/data corruption signal"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: duplicate_payment_flag
+        description: "1 if more than one payment record exists for this trip"
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "IN (0, 1)"
+
+      - name: payment_created_at
+        description: "Timestamp when payment record was created"
+        data_tests:
+          - not_null
