@@ -57,7 +57,7 @@ The project follows dbt's recommended layered architecture. Each layer has a sin
 
 > **architecture_diagram.png**
 >
-> `![Architecture Diagram](docs/images/architecture_diagram.png)`
+> `![Architecture Diagram](docs/images/Architectural_Diagram.drawio.png)`
 
 
 ## Entity Relationship Diagram
@@ -66,7 +66,7 @@ The star schema centres on `fct_trips` as the primary fact table. `fct_payments`
 
 > **ERD**
 >
-> `![ERD](docs/images/erd_diagram.png)`
+> `![ERD](docs/images/ERD.drawio.png)`
 
 **Key relationships:**
 - `dim_cities` → `dim_drivers` (one city, many drivers)
@@ -82,7 +82,7 @@ The star schema centres on `fct_trips` as the primary fact table. `fct_payments`
 
 > **DATA FLOW DIAGRAM**
 >
-> `![Data Flow](docs/images/dataflow_diagram.png)`
+> `![Data Flow](docs/images/DATA_FLOW.drawio.png)`
 
 The data flow is deliberately linear. Each layer acts as a quality checkpoint before the next one builds.
 
