@@ -2,20 +2,10 @@ version: 2
 
 models:
 
-  # -------------------------------------------------------------------------
   # PAYMENT_REL_REPORT
   # Grain: 1 row per trip
-  # -------------------------------------------------------------------------
   - name: payment_rel_report
-    description: >
-      Payment reliability report for the fraud team.
-      Combines trip-grain payment flags from fct_trips with raw payment
-      event counts from fct_payments to give a complete picture of what
-      happened at every payment attempt — not just the deduplicated outcome.
-      Enriches with driver and rider lifetime payment context to help
-      investigators identify patterns of payment abuse.
-      Materialised as a full table refresh — fraud investigation requires
-      the complete payment history, not just recent events.
+    description: "Payment reliability report for the fraud team."
     meta:
       owner: fraud-team
       tags: ['fraud']
@@ -28,7 +18,7 @@ models:
           - relationships:
               arguments:
                 field: trip_id
-                to: ref('fct_trips')
+                to: ref('fact_trips')
 
       - name: trip_date
         description: "Date of trip"
@@ -97,7 +87,6 @@ models:
       - name: has_any_payment_issue
         description: >
           1 if any of the four payment flags is active on this trip.
-          Composite signal for quick filtering of all problematic trips.
         data_tests:
           - not_null
           - dbt_utils.expression_is_true:
@@ -145,25 +134,12 @@ models:
                 expression: ">= 0"
 
 
-  # -------------------------------------------------------------------------
+
   # FRAUD_MONITOR
   # Grain: 1 row per flagged trip
-  # -------------------------------------------------------------------------
+
   - name: fraud_monitor
-    description: >
-      Live fraud monitoring feed for the fraud team.
-      Contains only trips with at least one active fraud flag — a filtered
-      subset of fct_trips enriched with driver and rider context for triage.
-      Fraud signals tracked:
-        extreme_surge_flag                    → surge multiplier > 10
-        duplicate_payment_flag                → more than one payment record
-        invalid_payment_amount_flag           → fee > amount (impossible legitimately)
-        missing_payment_flag                  → completed trip with no payment
-        failed_payment_on_completed_trip_flag → completed trip with failed payment
-      total_flags sums all active flags per trip as a triage priority score —
-      higher values indicate trips requiring more urgent investigation.
-      Incremental — new flagged trips append daily. Merge on trip_id handles
-      retrospective flags (e.g. duplicate payment arriving the day after the trip).
+    description: "Live fraud monitoring feed for the fraud team."
     meta:
       owner: fraud-team
       tags: ['fraud']
@@ -249,8 +225,6 @@ models:
       - name: total_flags
         description: >
           Sum of all five fraud flags for this trip.
-          Triage priority score — higher = more urgent investigation needed.
-          Range: 1 to 5 (all trips in this model have at least 1 active flag).
         data_tests:
           - not_null
           - dbt_utils.expression_is_true:

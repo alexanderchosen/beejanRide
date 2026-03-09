@@ -2,18 +2,13 @@ version: 2
 
 models:
 
-  # -------------------------------------------------------------------------
+
   # DAILY_REVENUE_DASHBOARD
   # Grain: 1 row per city per day
-  # -------------------------------------------------------------------------
+
   - name: daily_revenue_dashboard
     description: >
       Daily revenue time-series aggregated by city for the finance dashboard.
-      Pre-aggregates fct_trips to date + city grain so dashboard tools hit
-      a small flat table rather than scanning the full trip history.
-      Incremental by trip_date — new days append without reprocessing history.
-      Merge strategy handles retrospective trip updates (e.g. disputed payment
-      resolved the day after the trip).
     meta:
       owner: finance-team
       tags: ['finance']
@@ -56,13 +51,8 @@ models:
       - name: total_net_revenue
         description: >
           Sum of net_revenue on completed trips for this date and city.
-          Business metric definition: net_revenue = payment amount - processing fee.
-          Computed via calculate_net_revenue macro in trips_metrics.
         data_tests:
           - not_null
-
-      - name: avg_net_revenue_per_trip
-        description: "Average net revenue per completed trip — null if no completed trips"
 
       - name: corporate_net_revenue
         description: "Net revenue from corporate trips only"
@@ -73,9 +63,6 @@ models:
         description: "Net revenue from non-corporate (consumer) trips only"
         data_tests:
           - not_null
-
-      - name: daily_completion_rate_pct
-        description: "Completed trips as % of total trips on this date — null if no trips"
 
       - name: missing_payment_trips
         description: "Count of trips with no payment record — finance investigation signal"
@@ -94,18 +81,13 @@ models:
                 expression: ">= 0"
 
 
-  # -------------------------------------------------------------------------
+
   # CITY_LEVEL_PROFITABILITY
   # Grain: 1 row per city
-  # -------------------------------------------------------------------------
+
   - name: city_level_profitability
     description: >
       City-level profitability for strategic planning and investment decisions.
-      Aggregates full trip history per city and normalises revenue by city
-      maturity (days_since_launch) so newer cities can be benchmarked fairly
-      against established ones.
-      Includes driver supply metrics alongside demand metrics for a complete
-      picture of city-level unit economics.
     meta:
       owner: finance-team
       tags: ['finance']
@@ -165,12 +147,7 @@ models:
 
       - name: trips_per_driver_online_hour
         description: >
-          Completed trips per total driver online hours in this city.
-          Efficiency metric — higher = better driver utilisation.
-          Null if total driver online hours = 0.
-
-      - name: completion_rate_pct
-        description: "Completed trips as % of total trip attempts in this city"
+          Completed trips per total driver online hours in this city
 
       - name: missing_payment_trips
         description: "Count of trips with no payment record in this city"

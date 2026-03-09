@@ -62,7 +62,7 @@ The project follows dbt's recommended layered architecture. Each layer has a sin
 
 ## Entity Relationship Diagram
 
-The star schema centres on `fct_trips` as the primary fact table. `fct_payments` is a subordinate fact linked to trips. Three dimensions (`dim_cities`, `dim_drivers`, `dim_riders`) provide all descriptive context. 
+The star schema centres on `fct_trips` as the primary fact table. `fct_payments` is a subordinate fact linked to trips. Three dimensions (`dim_cities`, `dim_drivers`, `dim_riders`) provide all descriptive context.
 
 > **ERD**
 >
@@ -203,11 +203,10 @@ These definitions are the source of truth. They are also documented inline in sc
 | `net_revenue` | `amount - fee`. Can be negative when processing fee exceeds trip amount — preserved as fraud signal. | `trips_metrics`, `fct_trips` |
 | `rider_lifetime_value` | Sum of `net_revenue` across all completed trips for a rider. | `rider_metrics`, `dim_riders` |
 | `driver_lifetime_trips` | Count of all trips assigned to a driver regardless of status. | `driver_metrics`, `dim_drivers` |
-| `completion_rate_pct` | `completed trips / total trips * 100`. Null for drivers/riders with zero trips — null means no data, not zero performance. | `driver_metrics`, `rider_metrics` |
 | `total_online_hours` | Computed from `stg_driver_status_events` using `LEAD()` to pair online/offline events. Measures actual time available, not shift length. | `driver_metrics` |
 | `revenue_per_day_since_launch` | `total_net_revenue / days_since_launch`. Normalises revenue across cities that launched at different times. | `mart_city_profitability` |
-| `driver_tier` | Bronze (< 50 trips) / Silver (50–199) / Gold (200–499) / Platinum (500+). Based on `driver_lifetime_trips`. | `dim_drivers` |
-| `rider_tier` | Standard / Regular (5+ trips) / Frequent (20+ trips) / VIP (50+ trips or top 10% LTV). | `dim_riders` |
+| `driver_level` | Bronze (< 50 trips) / Silver (50–199) / Gold (200–499) / Platinum (500+). Based on `driver_lifetime_trips`. | `dim_drivers` |
+| `rider_level` | Standard / Regular (5+ trips) / Frequent (20+ trips) / VIP (50+ trips or top 10% LTV). | `dim_riders` |
 | `ltv_percentile` | `PERCENT_RANK()` of rider LTV across all riders. Requires full population — this is why `mart_rider_ltv` is a full table refresh. | `mart_rider_ltv` |
 | `total_flags` | Sum of all fraud flag columns on a trip. Acts as a triage score in `mart_fraud_monitoring`. | `mart_fraud_monitoring` |
 
@@ -283,12 +282,12 @@ A `dbt_utils.recency` test on `trips_metrics` ensures it has been updated within
 | `dim_*` | table | Full population always needed for FK integrity |
 | `fct_trips` | incremental (merge) | High volume; status changes need overwrite not append |
 | `fct_payments` | incremental (merge) | Append-style, merge guards against Airbyte duplicates |
-| `mart_daily_revenue` | incremental (merge) | Append by date; retrospective updates possible |
-| `mart_city_profitability` | table | Only 5 cities; rankings need full history |
-| `mart_driver_leaderboard` | table | `RANK()` requires full population |
-| `mart_rider_ltv` | table | `PERCENT_RANK()` requires full population |
-| `mart_payment_reliability` | table | Fraud investigation needs complete history |
-| `mart_fraud_monitoring` | incremental (merge) | Event-based; retrospective flags possible |
+| `daily_revenue_dashboard` | incremental (merge) | Append by date; retrospective updates possible |
+| `city_level_profitability` | table | Only 5 cities; rankings need full history |
+| `driver_leaderboard` | table | `RANK()` requires full population |
+| `rider_ltv_analysis` | table | `PERCENT_RANK()` requires full population |
+| `payment_rel_report` | table | Fraud investigation needs complete history |
+| `fraud_monitor` | incremental (merge) | Event-based; retrospective flags possible |
 
 **Full refresh when needed:**
 ```bash
@@ -313,7 +312,7 @@ Payment logic (deduplication, the `duplicate_payment_flag` macro) lives inside `
 
 ### Why `net_revenue` is not floored at zero
 
-Negative `net_revenue` (when processing fee exceeds trip amount) is deliberately preserved. It is a fraud signal, not a data error. Flooring it at zero would hide the signal from `mart_payment_reliability` and `mart_fraud_monitoring`, which is the opposite of what we want.
+Negative `net_revenue` (when processing fee exceeds trip amount) is deliberately preserved. It is a fraud signal, not a data error. Flooring it at zero would hide the signal from `payment_rel_report` and `fraud_monitor`, which is the opposite of what we want.
 
 ### Star schema: FK keys only in facts
 
@@ -379,7 +378,7 @@ This opens a local web server at `http://localhost:8080`. The lineage graph show
 
 ```bash
 # Clone the repo
-git clone https://github.com/<your-username>/beejanRide.git
+git clone https://github.com/alexanderchosen/beejanRide.git
 cd beejanRide
 
 # Install dbt packages
@@ -424,7 +423,7 @@ dbt docs generate && dbt docs serve
 dbt test
 
 # Custom tests only
-dbt test --select no_negative_revenue trip_duration_positive completed_trip_must_have_successful_payment
+dbt test --select negative_revenue trip_duration successful_payment_trip
 
 # Tests on a specific model
 dbt test --select trips_metrics
@@ -466,19 +465,52 @@ ORDER BY revenue_per_day_since_launch DESC
 ```
 
 ---
-
-### 6. Payment reliability breakdown by city
+### 1. City Level Profitability
 
 ```sql
-SELECT
-    city_name,
-    total_completed_trips,
-    trips_with_failed_payment,
-    ROUND(trips_with_failed_payment / total_completed_trips * 100, 2) AS failed_payment_rate_pct,
-    trips_with_duplicate_payment,
-    total_revenue_at_risk
-FROM `beejanride_fraud.mart_payment_reliability`
-ORDER BY failed_payment_rate_pct DESC
+SELECT *
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_finance.city_level_profitability`
+```
+
+### 2. Daily revenue dashboard by trip_id
+
+```sql
+SELECT *
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_finance.daily_revenue_dashboard`
+ORDER BY trip_date
+```
+
+### 3. Fraud monitor - Driver under monitoring
+
+```sql
+SELECT driver_id
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_fraud.fraud_monitor`
+```
+
+### 4. Net revenue grouped by city_id, driver_id
+
+```sql
+SELECT net_revenue, driver_id, city_id
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_fraud.payment_rel_report`
+GROUP BY net_revenue, city_id, driver_id
+```
+
+### 5. Driver rating on leaderboard showing city_name and rating in descending order
+
+```sql
+SELECT driver_id, rating, driver_level, city_name
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_operations.driver_leaderboard`
+ORDER BY rating DESC
+
+```
+
+### 6. Rider LTV Analysis
+
+```sql
+SELECT rider_id, rider_level, rider_lifetime_value
+FROM `beejanride-488715.beejanride_488715_beejanRide_dataset_operations.rider_ltv_analysis`
+GROUP BY rider_id, rider_level, rider_lifetime_value
+ORDER BY rider_lifetime_value DESC
 ```
 
 ---

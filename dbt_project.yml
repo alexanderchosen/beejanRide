@@ -15,82 +15,48 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
-
-# -----------------------------------------------------------------------
-# MODEL CONFIGURATION
-# -----------------------------------------------------------------------
-# Folder-level defaults applied via +config.
-# Individual models override these in their own {{ config() }} blocks
-# when they differ from the folder default (e.g. incremental models).
-#
-# Schema routing:
-#   Each layer lands in its own BigQuery dataset, keeping staging,
-#   intermediate, and mart tables cleanly separated in the warehouse.
-#   Dataset names follow the pattern: <target_schema>_<+schema>
-#   e.g. if target schema is 'beejanride', staging lands in 'beejanride_staging'
-# -----------------------------------------------------------------------
-
 models:
   beejanRide:
-
     staging:
-      +materialized: view        # staging models are views — no storage cost,
-      +schema: staging           # always reflect latest source data
+      +materialized: view
+      +schema: staging
       +tags: ['staging']
 
     intermediate:
-      +materialized: table       # default for intermediate — incremental models
-      +schema: intermediate      # override this in their own {{ config() }} blocks
+      +materialized: table
+      +schema: intermediate
       +tags: ['intermediate']
 
-    marts:
-
+    mart:
       core:
-        +materialized: table     # dims and facts — full refresh by default
-        +schema: core            # incremental facts override in {{ config() }}
+        +materialized: table
+        +schema: core
         +tags: ['core']
 
       finance:
-        +materialized: table     # default — mart_daily_revenue overrides to incremental
+        +materialized: table
         +schema: finance
         +tags: ['finance']
 
       operations:
-        +materialized: table     # all operations marts are full table refresh
+        +materialized: table
         +schema: operations
         +tags: ['operations']
 
       fraud:
-        +materialized: table     # default — mart_fraud_monitoring overrides to incremental
+        +materialized: table
         +schema: fraud
         +tags: ['fraud']
 
 
-# -----------------------------------------------------------------------
-# SNAPSHOT CONFIGURATION
-# -----------------------------------------------------------------------
-# Global snapshot defaults — individual snapshots inherit these and only
-# need to define strategy, unique_key, and updated_at in their own config.
-# Adding more snapshots in future (e.g. riders_snapshot) will automatically
-# inherit target_schema and invalidate_hard_deletes from here.
-# -----------------------------------------------------------------------
-
 snapshots:
   beejanRide:
-    +target_schema: snapshots
+    +target_schema: driver_snapshots
     +invalidate_hard_deletes: true
 
-
-# -----------------------------------------------------------------------
-# SEED CONFIGURATION
-# -----------------------------------------------------------------------
 seeds:
   beejanRide:
     +schema: seeds
 
-
-# -----------------------------------------------------------------------
-# FLAGS
-# -----------------------------------------------------------------------
 flags:
   bigquery_use_batch_source_freshness: true

@@ -1,17 +1,12 @@
 version: 2
 
 models:
-
-  # -------------------------------------------------------------------------
   # DIM_CITIES
   # Grain: 1 row per city
-  # -------------------------------------------------------------------------
+
   - name: dim_cities
     description: >
-      City dimension table. Reference data for all 5 UK cities beejanRide
-      operates in. Used as the primary FK target for city_id across all
-      fact and mart tables. Includes days_since_launch for maturity-normalised
-      revenue comparisons in mart_city_profitability.
+      City dimension table
     meta:
       owner: data-engineering
       tags: ['core']
@@ -43,8 +38,6 @@ models:
       - name: days_since_launch
         description: >
           Derived: number of days between launch_date and today.
-          Used in mart_city_profitability to normalise revenue by city maturity
-          so newer cities are benchmarked fairly against established ones.
         data_tests:
           - not_null
           - dbt_utils.expression_is_true:
@@ -52,18 +45,12 @@ models:
                 expression: ">= 0"
 
 
-  # -------------------------------------------------------------------------
   # DIM_DRIVERS
   # Grain: 1 row per driver (current state — Type 1 SCD)
-  # -------------------------------------------------------------------------
+
   - name: dim_drivers
     description: >
-      Driver dimension table showing current state of all drivers.
-      Enriched with aggregated performance metrics from driver_metrics
-      for direct consumption by mart models and BI tools.
-      Historical state changes are tracked separately in drivers_snapshot (SCD Type 2).
-      Rating is intentionally nullable — null means unrated new driver,
-      not a zero-rated poor driver.
+      Driver dimension table
     meta:
       owner: operations-team
       tags: ['core', 'operations']
@@ -118,10 +105,7 @@ models:
 
       - name: driver_level
         description: >
-          Derived segmentation based on driver_lifetime_trips:
-          Level 0 (0 trips), level 1 (1), Level 2 (1-3), Level 3 (3+).
-          Computed once in dim_drivers so downstream marts read the column
-          rather than reimplementing thresholds independently.
+          Derived segmentation based on driver_lifetime_trips
         data_tests:
           - not_null
           - accepted_values:
@@ -148,18 +132,6 @@ models:
           - dbt_utils.expression_is_true:
               arguments:
                 expression: ">= 0"
-
-      - name: completion_rate_pct
-        description: "Completed trips as % of total attempts — null for new drivers"
-
-      - name: cancellation_rate_pct
-        description: "Cancelled trips as % of total attempts — null for new drivers"
-
-      - name: trips_per_online_hour
-        description: "Completed trips per hour online — null if never logged on"
-
-      - name: avg_net_revenue_per_trip
-        description: "Average net revenue per completed trip — null for new drivers"
 
       - name: failed_payment_count
         description: "Lifetime count of completed trips with failed payments"
@@ -194,18 +166,12 @@ models:
                 expression: ">= 0"
 
 
-  # -------------------------------------------------------------------------
   # DIM_RIDERS
   # Grain: 1 row per rider (current state — Type 1 SCD)
-  # -------------------------------------------------------------------------
+
   - name: dim_riders
     description: >
       Rider dimension table showing current state of all riders.
-      Enriched with aggregated behaviour metrics from rider_metrics.
-      Rider attributes (country, referral status) are immutable after signup
-      so no snapshot is required for riders.
-      Rate and average columns are null for riders with no trip history —
-      null means no data yet, not zero performance.
     meta:
       owner: operations-team
       tags: ['core', 'operations']
@@ -252,9 +218,7 @@ models:
 
       - name: rider_level
         description: >
-          Derived segmentation based on completed_trips:
-          new (0 trips), occasional (1), regular (1-3), frequent (3+).
-          Computed once in dim_riders for consistent downstream consumption.
+          Derived segmentation based on completed_trips
         data_tests:
           - not_null
           - accepted_values:
@@ -264,7 +228,6 @@ models:
       - name: most_frequent_city_id
         description: >
           City where the rider has taken the most completed trips.
-          Null for riders with zero completed trips.
         data_tests:
           - relationships:
               arguments:
@@ -278,15 +241,6 @@ models:
           - dbt_utils.expression_is_true:
               arguments:
                 expression: ">= 0"
-
-      - name: avg_spend_per_trip
-        description: "Average net revenue per completed trip — null for new riders"
-
-      - name: completion_rate_pct
-        description: "Completed trips as % of (completed + cancelled) — null for new riders"
-
-      - name: cancellation_rate_pct
-        description: "Cancelled trips as % of (completed + cancelled) — null for new riders"
 
       - name: missing_payment_count
         description: "Lifetime count of trips with no payment record"
@@ -321,19 +275,11 @@ models:
                 expression: ">= 0"
 
 
-  # -------------------------------------------------------------------------
-  # FCT_TRIPS
+  # FACT_TRIPS
   # Grain: 1 row per trip
-  # -------------------------------------------------------------------------
-  - name: fct_trips
-    description: >
-      Central trip fact table. One row per trip containing all measures,
-      fraud flags, and FK references to dimension tables.
-      Incremental on coalesce(updated_at, requested_at) with merge strategy
-      to handle both new trips and status changes on existing trips.
-      net_revenue can be negative when fee > amount — preserved intentionally
-      as a fraud signal via invalid_payment_amount_flag.
-      All flag columns are 0/1 integers, never null.
+
+  - name: fact_trips
+    description: Central trip fact table.
     meta:
       owner: data-engineering
       tags: ['core', 'finance', 'fraud']
@@ -387,8 +333,6 @@ models:
       - name: net_revenue
         description: >
           Net revenue after fee deduction (amount - fee).
-          Can be negative when fee > amount — preserved as fraud evidence.
-          Revenue reporting should filter on status = 'completed'.
         data_tests:
           - not_null
 
@@ -467,18 +411,12 @@ models:
           - not_null
 
 
-  # -------------------------------------------------------------------------
-  # FCT_PAYMENTS
+  # FACT_PAYMENTS
   # Grain: 1 row per payment event (not deduplicated)
-  # -------------------------------------------------------------------------
-  - name: fct_payments
+
+  - name: fact_payments
     description: >
-      Payment event fact table. One row per raw payment event including
-      duplicates and failures — intentionally not deduplicated.
-      trips_metrics handles deduplication at trip grain for revenue purposes.
-      This model preserves every payment attempt for payment reliability
-      and fraud investigation. No net_revenue column — revenue reporting
-      belongs exclusively at trip grain in fct_trips.
+      Payment event fact table.
     meta:
       owner: data-engineering
       tags: ['core', 'fraud']

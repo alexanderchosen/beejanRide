@@ -1,21 +1,9 @@
 -- Grain: 1 row per driver, including drivers with zero trips
---
--- Sources:
---   stg_drivers             → driver identity and attributes
---   trips_metrics           → enriched trip data including net_revenue, flags
---   stg_driver_status_events → online/offline session events for availability
---
+
 -- NULL STRATEGY:
---   Counts & sums  → coalesce to 0  (a driver with no trips has 0 trips, £0 earned)
---   Rates/averages → keep null      (null = no data yet vs 0 = genuinely poor performance)
---   rating         → keep null      (null = unrated new driver vs 0 = very poor driver)
---
--- DOWNSTREAM USAGE:
---   Driver leaderboard      → driver_lifetime_trips, completion_rate_pct, total_net_revenue_earned, rating
---   Daily revenue dashboard → total_net_revenue_earned, corporate_trips, city_id
---   City-level profitability → city_id, total_net_revenue_earned, corporate_trips
---   Fraud monitoring view   → extreme_surge_trips, cancellation_rate_pct, failed_payment_count
---   Payment reliability     → failed_payment_count, missing_payment_count
+--   a driver with no trips has 0 trips, £0 earned, therefore I need to coalesce to 0 to avoid equating a driver with no trips to a driver wuth poor records
+--   Also, for the rating, I need to keep null data for new driver with no rating yet, because if it is coalesced to 0, it will mean the driver already has a poor performance rating immediately after joining
+
 
 {{ config(
     materialized='table'
@@ -62,11 +50,8 @@ trip_metrics as (
     group by driver_id
 ),
 
+-- this part will bw useful downstream to calculate the amount of online activities a driver has
 online_sessions as (
-
-    -- Pair each 'online' event with the next 'offline' event for that driver
-    -- using LEAD() window function to find session end times
-
     select driver_id, event_timestamp as online_at,
         lead(event_timestamp) over (partition by driver_id order by event_timestamp)  as offline_at, status
     from {{ ref('stg_driver_status_events') }}
@@ -86,23 +71,20 @@ online_hours as (
 )
 
 select
-    -- Identity
+    -- for driver identity
     driver.driver_id, driver.city_id, driver.vehicle_id, driver.driver_status, driver.rating, driver.onboarding_date,
 
-    -- Trip volume (coalesce to 0 — counts are always meaningful as 0)
+    -- here, it is reasonable to use coalesce to ensure that even new drivers with no trip at all equates to 0
+    -- to ensure consistency in the data type
     coalesce(trip.driver_lifetime_trips, 0) as driver_lifetime_trips,
     coalesce(trip.cancelled_trips, 0) as cancelled_trips,
     coalesce(trip.no_show_trips, 0) as no_show_trips,
     coalesce(trip.total_trip_attempts, 0) as total_trip_attempts,
 
-    -- Revenue (coalesce to 0 — no trips = £0 earned)
+    -- drivers with no revenue value is coalesced to 0, ensuring that the data type is consistent instead of having a null
     coalesce(trip.total_net_revenue_earned, 0) as total_net_revenue_earned,
 
-    -- Averages (keep null — null = no trips yet to average over)
-    trip.avg_net_revenue_per_trip,
-    trip.avg_surge_multiplier,
-
-    -- Surge & corporate (coalesce to 0)
+    --driver with no extreme trip value is replaced with 0 instead of null
     coalesce(trip.extreme_surge_trips, 0) as extreme_surge_trips,
     coalesce(trip.corporate_trips, 0) as corporate_trips,
 
@@ -115,18 +97,10 @@ select
     -- Online availability (coalesce to 0 — never logged on = 0 hours)
     coalesce(online.total_online_hours, 0) as total_online_hours,
 
-    -- Rates (keep null — null = no data yet, 0 = genuinely poor performance)
-    case when coalesce(trip.total_trip_attempts, 0) = 0 then null
-        else round(coalesce(trip.driver_lifetime_trips, 0) * 100.0/ trip.total_trip_attempts,2) end as completion_rate_pct,
-
-    case when coalesce(trip.total_trip_attempts, 0) = 0 then null
-        else round(coalesce(trip.cancelled_trips, 0) * 100.0 / trip.total_trip_attempts, 2) end as cancellation_rate_pct,
-
     -- Productivity (keep null — never been online ≠ 0 productivity)
     case
         when coalesce(online.total_online_hours, 0) = 0 then null
-        else round(coalesce(trip.driver_lifetime_trips, 0)/ online.total_online_hours,2
-        )
+        else round(coalesce(trip.driver_lifetime_trips, 0)/ online.total_online_hours,2)
     end as trips_per_online_hour
 
 from driver_base as driver
