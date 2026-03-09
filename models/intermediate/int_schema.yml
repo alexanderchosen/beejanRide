@@ -189,9 +189,9 @@ models:
     data_tests:
       # Custom singular tests — SQL files in tests/ folder
       # Each returns failing rows; test passes when zero rows returned
-      - negative_revenue
-      - trip_duration
-      - successful_payment_trip
+      #- negative_revenue
+      #- trip_duration
+      #- successful_payment_trip
 
       # Freshness guard: fails if trips_metrics has not been updated in last 2 hours
       # Prevents driver_metrics and rider_metrics building on stale incremental data

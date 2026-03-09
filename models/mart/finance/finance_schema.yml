@@ -3,10 +3,10 @@ version: 2
 models:
 
   # -------------------------------------------------------------------------
-  # MART_DAILY_REVENUE
+  # DAILY_REVENUE_DASHBOARD
   # Grain: 1 row per city per day
   # -------------------------------------------------------------------------
-  - name: mart_daily_revenue
+  - name: daily_revenue_dashboard
     description: >
       Daily revenue time-series aggregated by city for the finance dashboard.
       Pre-aggregates fct_trips to date + city grain so dashboard tools hit
@@ -95,10 +95,10 @@ models:
 
 
   # -------------------------------------------------------------------------
-  # MART_CITY_PROFITABILITY
+  # CITY_LEVEL_PROFITABILITY
   # Grain: 1 row per city
   # -------------------------------------------------------------------------
-  - name: mart_city_profitability
+  - name: city_level_profitability
     description: >
       City-level profitability for strategic planning and investment decisions.
       Aggregates full trip history per city and normalises revenue by city
@@ -187,4 +187,3 @@ models:
           - dbt_utils.expression_is_true:
               arguments:
                 expression: ">= 0"
-                

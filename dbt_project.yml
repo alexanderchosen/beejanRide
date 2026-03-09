@@ -1,15 +1,9 @@
-# Name your project! Project names should contain only lowercase characters
-# and underscores. A good package name should reflect your organization's
-# name or the intended use of these models
 name: 'beejanRide'
 version: '1.0.0'
 
-# This setting configures which "profile" dbt uses for this project.
 profile: 'beejanRide'
 
-# These configurations specify where dbt should look for different types of files.
-# The `model-paths` config, for example, states that models in this project can be
-# found in the "models/" directory. You probably won't need to change these!
+# File path configuration
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
@@ -17,37 +11,86 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-clean-targets:         # directories to be removed by `dbt clean`
+clean-targets:
   - "target"
   - "dbt_packages"
 
 
-# Configuring models
-# Full documentation: https://docs.getdbt.com/docs/configuring-models
+# -----------------------------------------------------------------------
+# MODEL CONFIGURATION
+# -----------------------------------------------------------------------
+# Folder-level defaults applied via +config.
+# Individual models override these in their own {{ config() }} blocks
+# when they differ from the folder default (e.g. incremental models).
+#
+# Schema routing:
+#   Each layer lands in its own BigQuery dataset, keeping staging,
+#   intermediate, and mart tables cleanly separated in the warehouse.
+#   Dataset names follow the pattern: <target_schema>_<+schema>
+#   e.g. if target schema is 'beejanride', staging lands in 'beejanride_staging'
+# -----------------------------------------------------------------------
 
-# In this example config, we tell dbt to build all models in the example/
-# directory as views. These settings can be overridden in the individual model
-# files using the `{{ config(...) }}` macro.
 models:
   beejanRide:
-    # Config indicated by + and applies to all files under models/example/
+
     staging:
-      +materialized: view
+      +materialized: view        # staging models are views — no storage cost,
+      +schema: staging           # always reflect latest source data
+      +tags: ['staging']
+
     intermediate:
-      +materialized: table
+      +materialized: table       # default for intermediate — incremental models
+      +schema: intermediate      # override this in their own {{ config() }} blocks
+      +tags: ['intermediate']
+
     marts:
+
       core:
-        +materialized: table
+        +materialized: table     # dims and facts — full refresh by default
+        +schema: core            # incremental facts override in {{ config() }}
+        +tags: ['core']
+
       finance:
+        +materialized: table     # default — mart_daily_revenue overrides to incremental
         +schema: finance
         +tags: ['finance']
+
       operations:
+        +materialized: table     # all operations marts are full table refresh
         +schema: operations
         +tags: ['operations']
+
       fraud:
+        +materialized: table     # default — mart_fraud_monitoring overrides to incremental
         +schema: fraud
         +tags: ['fraud']
 
+
+# -----------------------------------------------------------------------
+# SNAPSHOT CONFIGURATION
+# -----------------------------------------------------------------------
+# Global snapshot defaults — individual snapshots inherit these and only
+# need to define strategy, unique_key, and updated_at in their own config.
+# Adding more snapshots in future (e.g. riders_snapshot) will automatically
+# inherit target_schema and invalidate_hard_deletes from here.
+# -----------------------------------------------------------------------
+
+snapshots:
+  beejanRide:
+    +target_schema: snapshots
+    +invalidate_hard_deletes: true
+
+
+# -----------------------------------------------------------------------
+# SEED CONFIGURATION
+# -----------------------------------------------------------------------
+seeds:
+  beejanRide:
+    +schema: seeds
+
+
+# -----------------------------------------------------------------------
+# FLAGS
+# -----------------------------------------------------------------------
 flags:
   bigquery_use_batch_source_freshness: true
-

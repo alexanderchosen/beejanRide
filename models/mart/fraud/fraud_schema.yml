@@ -3,10 +3,10 @@ version: 2
 models:
 
   # -------------------------------------------------------------------------
-  # MART_PAYMENT_RELIABILITY
+  # PAYMENT_REL_REPORT
   # Grain: 1 row per trip
   # -------------------------------------------------------------------------
-  - name: mart_payment_reliability
+  - name: payment_rel_report
     description: >
       Payment reliability report for the fraud team.
       Combines trip-grain payment flags from fct_trips with raw payment
@@ -146,10 +146,10 @@ models:
 
 
   # -------------------------------------------------------------------------
-  # MART_FRAUD_MONITORING
+  # FRAUD_MONITOR
   # Grain: 1 row per flagged trip
   # -------------------------------------------------------------------------
-  - name: mart_fraud_monitoring
+  - name: fraud_monitor
     description: >
       Live fraud monitoring feed for the fraud team.
       Contains only trips with at least one active fraud flag — a filtered

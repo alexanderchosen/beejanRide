@@ -3,10 +3,10 @@ version: 2
 models:
 
   # -------------------------------------------------------------------------
-  # MART_DRIVER_LEADERBOARD
+  # DRIVER_LEADERBOARD
   # Grain: 1 row per driver
   # -------------------------------------------------------------------------
-  - name: mart_driver_leaderboard
+  - name: driver_leaderboard
     description: >
       Driver performance leaderboard for the operations team.
       Ranks all drivers within their assigned city across four dimensions:
@@ -123,10 +123,10 @@ models:
 
 
   # -------------------------------------------------------------------------
-  # MART_RIDER_LTV
+  # RIDER_LTV_ANALYSIS
   # Grain: 1 row per rider
   # -------------------------------------------------------------------------
-  - name: mart_rider_ltv
+  - name: rider_ltv_analysis
     description: >
       Rider lifetime value analysis for the operations team.
       Segments riders by LTV percentile, acquisition cohort (referred vs organic),
