@@ -145,10 +145,10 @@ The core layer implements a standard star schema. Dimension tables carry descrip
 - `dim_riders` — all riders LEFT JOIN `rider_metrics`, adds `rider_tier` and `ltv_segment`
 
 **Facts:**
-- `fct_trips` — one row per trip, FK keys only, pre-extracted date parts for partitioning. Incremental merge on `trip_id`.
-- `fct_payments` — one row per payment event, not deduplicated. Preserves raw payment history for reliability and fraud investigation. Incremental merge on `payment_id`.
+- `fact_trips` — one row per trip, FK keys only, pre-extracted date parts for partitioning. Incremental merge on `trip_id`.
+- `fact_payments` — one row per payment event, not deduplicated. Preserves raw payment history for reliability and fraud investigation. Incremental merge on `payment_id`.
 
-Note: `net_revenue` does not appear on `fct_payments`. Revenue is a trip-grain measure. Adding it to the payment fact would be the wrong grain and would mislead any analyst joining the two.
+Note: `net_revenue` does not appear on `fact_payments`. Revenue is a trip-grain measure. Adding it to the payment fact would be the wrong grain and would mislead any analyst joining the two.
 
 ---
 
@@ -165,7 +165,7 @@ Mart models are pre-aggregated, business-domain-specific, and designed to be que
 - `mart_rider_ltv` — rider lifetime value with `PERCENT_RANK()` for LTV percentile and segment assignment. Full table — `PERCENT_RANK()` requires full population.
 
 **Fraud (`tag: fraud`)**
-- `mart_payment_reliability` — joins all fraud signals from `fct_trips` and `fct_payments` with dimensional context. Full table — fraud investigation needs complete history.
+- `mart_payment_reliability` — joins all fraud signals from `fact_trips` and `fact_payments` with dimensional context. Full table — fraud investigation needs complete history.
 - `mart_fraud_monitoring` — incremental, filters only flagged trips, adds `total_flags` triage score. Designed as an operational queue for the fraud team.
 
 ---
@@ -306,9 +306,9 @@ The intermediate layer is the only place business logic exists. `driver_metrics`
 
 Payment logic (deduplication, the `duplicate_payment_flag` macro) lives inside `trips_metrics` CTEs because payments only make sense in the context of a trip. A standalone `int_payments` model would only be justified if multiple downstream consumers needed the same payment logic independently. Right now they don't — everything flows through `trips_metrics`.
 
-### Why `fct_payments` is not deduplicated
+### Why `fact_payments` is not deduplicated
 
-`fct_payments` preserves raw payment events, including duplicates. Deduplication at the fact table level would destroy the evidence trail that the fraud team needs. The `duplicate_payment_flag` column identifies duplicates without removing them. Analysts querying revenue should use `fct_trips`, not `fct_payments`.
+`fact_payments` preserves raw payment events, including duplicates. Deduplication at the fact table level would destroy the evidence trail that the fraud team needs. The `duplicate_payment_flag` column identifies duplicates without removing them. Analysts querying revenue should use `fact_trips`, not `fact_payments`.
 
 ### Why `net_revenue` is not floored at zero
 
@@ -360,9 +360,8 @@ dbt docs serve
 
 This opens a local web server at `http://localhost:8080`. The lineage graph shows the full DAG from sources through staging, intermediate, core, and marts.
 
-> **Add your lineage screenshot here once generated**
->
-> `![dbt Lineage Graph](docs/images/lineage_screenshot.png)`
+
+> `![dbt Lineage Graph](docs/images/dbt-lineage-graph.png)`
 
 
 ## Getting Started
