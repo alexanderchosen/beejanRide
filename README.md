@@ -22,6 +22,12 @@
 - [Getting Started](#getting-started)
 - [Sample Analytical Queries](#sample-analytical-queries)
 - [Future Improvements](#future-improvements)
+- [Orchestration with Apache Airflow](#orchestration-with-apache-airflow)
+- [Orchestration Tech Stack](#orchestration-tech-stack)
+- [Updated Architecture](#updated-architecture)
+- [DAG Structure](#dag-structure)
+- [Airflow Setup](#airflow-setup)
+- [How Idempotency is Maintained](#how-idempotency-is-maintained)
 
 ---
 
