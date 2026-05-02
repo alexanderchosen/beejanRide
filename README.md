@@ -553,3 +553,302 @@ These are things we would build next if this were a production system continuing
 ---
 
 *Built with dbt-core 1.11.6 · BigQuery · Airbyte · dbt-utils 0.9.7*
+
+
+---
+---
+
+---
+
+## Orchestration with Apache Airflow for BeejanRide Project
+
+BeejanRide now runs end-to-end automatically. Apache Airflow orchestrates the complete ELT pipeline — triggering Airbyte Cloud to sync raw data into BigQuery, running all dbt transformation layers in order, enforcing data quality gates, and sending email alerts on success or failure. Nothing runs manually in production.
+
+---
+
+### Orchestration Tech Stack
+
+| Tool | Version | Role |
+|---|---|---|
+| Apache Airflow | 3.1.8 | Pipeline orchestration and scheduling |
+| apache-airflow-providers-airbyte | 5.4.1 | Airbyte Cloud integration |
+| Airbyte Cloud | — | Scheduled CDC sync (set to Manual, triggered by Airflow) |
+| Python | 3.12 | DAG runtime |
+
+---
+
+### Updated Architecture
+
+The architecture now includes an orchestration layer sitting above the entire ELT stack. Airflow is the single entry point — nothing runs unless Airflow triggers it.
+
+
+```
+Apache Airflow Scheduler (every 2 hours)
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Airbyte Cloud Sync │  PostgreSQL → BigQuery (CDC)
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt source         │  trips_raw freshness check (< 2 hrs)
+    │  freshness check    │
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt build staging  │  6 views + column tests
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt build          │  trips_metrics (incremental)
+    │  intermediate       │  driver_metrics, rider_metrics (table)
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt test           │  Quality gate — custom tests + recency guard
+    │  intermediate       │  Pipeline stops here if any test fails
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt build core     │  dim_* (table) + fct_* (incremental)
+    └─────────────────────┘
+              │
+       ┌──────┼──────┐
+       ▼      ▼      ▼         ← parallel execution
+   Finance  Ops   Fraud
+       └──────┼──────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  dbt snapshot       │  SCD Type 2 — drivers_snapshot
+    └─────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Email notification │  Success alert
+    └─────────────────────┘
+```
+
+---
+
+### DAG Structure
+
+The project contains two DAGs:
+
+**`beejanride_elt_pipeline`** — the production pipeline. Runs automatically every 2 hours via cron schedule `0 */2 * * *`. This schedule is aligned deliberately with the 2-hour source freshness error threshold on `trips_raw` and the `dbt_utils.recency` guard on `trips_metrics` — a successful pipeline run always satisfies both guards.
+
+**`beejanride_backfill`** — a manual repair DAG with schedule set to daily. Skips Airbyte (raw data already in BigQuery) and the snapshot (SCD Type 2 cannot replay history).
+
+---
+
+### Pipeline Folder Structure
+
+```
+beejanRide/
+└── airflow/
+    └── dags/
+        ├── beejanride_elt_dag.py        ← production ELT pipeline
+        └── beejanride_backfill_dag.py   ← manual backfill DAG
+```
+
+---
+
+### Airflow Setup
+
+#### Prerequisites
+
+- Python 3.12
+- A dedicated virtual environment for Airflow (separate from the dbt environment)
+- Airflow home directory: `~/airflow`
+
+---
+
+### Connections Required
+
+Set up the following connections in **Admin → Connections → + Add**:
+
+**Airbyte Cloud connection:**
+
+```
+Conn Id:       airbyte_cloud_conn
+Conn Type:     Airbyte
+Server URL:    https://api.airbyte.com/v1/
+Client ID:     your-client-id      (from Airbyte Cloud → Settings → Applications)
+Client Secret: your-client-secret
+Token URL:     v1/applications/token
+```
+
+> Note: In Airflow 3, the Client ID and Client Secret fields map to the Login and Password fields in the connection form due to a known display issue. The provider reads them correctly regardless of the label shown.
+
+**SMTP Email connection:**
+
+```
+Conn Id:   smtp_coonect
+Conn Type: SMTP
+Host:      smtp.gmail.com
+Port:      465
+Login:     your@gmail.com
+Password:  your-gmail-app-password
+```
+
+---
+
+### Variables Required
+
+Set up the following in **Admin → Variables → + Add**:
+
+| Key | Value |
+|---|---|
+| `airbyte_connection_id` | Your Airbyte connection UUID (from the Airbyte Cloud connection URL) |
+
+**Finding your Airbyte connection UUID:** log into `cloud.airbyte.com` → Connections → click your connection → copy the UUID from the browser URL between `/connections/` and `/status`.
+
+---
+
+### Before Running
+
+**Set your Airbyte Cloud sync schedule to Manual.** In Airbyte Cloud: Connections → your connection → Settings → Schedule → Manual. This ensures Airflow is the sole trigger for all syncs. If left on an automatic schedule, Airbyte will sync independently of Airflow causing concurrent writes to BigQuery.
+
+**Update the constants at the top of each DAG file:**
+
+```python
+AIRBYTE_CONNECTION_ID = "your-uuid-here"
+ALERT_EMAIL           = "your@gmail.com"
+DBT_PROJECT_DIR       = "/home/yourname/projects/beejanRide"
+DBT_PROFILES_DIR      = "/home/yourname/.dbt"
+```
+
+**Verify the DAGs parse correctly:**
+
+```bash
+source ~/venvs/airflow-env/bin/activate
+airflow dags list
+# Both beejanride_elt_pipeline and beejanride_backfill should appear
+```
+
+---
+
+### Running the Pipeline
+
+```bash
+# Trigger a manual run of the production pipeline
+airflow dags trigger beejanride_elt_pipeline
+
+# Trigger a single backfill run via the UI
+# DAGs → beejanride_backfill → Trigger DAG
+
+# Trigger a backfill across a date range via CLI
+airflow dags backfill beejanride_backfill \
+    --start-date 2025-04-30 \
+    --end-date   2025-05-02
+```
+
+---
+
+### Task Dependency Design
+
+Each task in the production DAG represents a distinct pipeline phase with a single responsibility. The separation is intentional — when a task fails, the Airflow UI immediately identifies which phase failed without requiring log inspection.
+
+| Task | Phase | Purpose |
+|---|---|---|
+| `trigger_airbyte_sync` | Ingestion | Calls Airbyte Cloud API to start sync |
+| `wait_for_airbyte_sync` | Ingestion | Polls until sync completes (mode=reschedule) |
+| `dbt_source_freshness` | Freshness | Fails pipeline if trips_raw > 2 hours old |
+| `dbt_build_staging` | Transformation | 6 staging views + column tests |
+| `dbt_build_intermediate` | Transformation | Business logic layer (incremental + tables) |
+| `dbt_test_intermediate` | Quality Gate | Custom tests + recency guard — blocks marts if failed |
+| `dbt_build_core` | Transformation | Star schema dims and facts |
+| `dbt_build_finance` | Transformation | Finance mart models (parallel) |
+| `dbt_build_operations` | Transformation | Operations mart models (parallel) |
+| `dbt_build_fraud` | Transformation | Fraud mart models (parallel) |
+| `dbt_run_snapshot` | Snapshot | SCD Type 2 on drivers |
+| `email_success_notification` | Alerting | Success email when pipeline completes |
+
+The three mart tasks (`dbt_build_finance`, `dbt_build_operations`, `dbt_build_fraud`) run in parallel after `dbt_build_core` completes. This is the key performance optimisation — parallel execution reduces total mart build time significantly compared to running them sequentially.
+
+The `dbt_test_intermediate` task acts as a hard quality gate. If any of the three custom tests or the recency guard fails, all downstream tasks (`dbt_build_core` and everything below it) are skipped. Stale mart data is preferable to corrupt mart data reaching dashboards.
+
+---
+
+### Failure Handling and Retries
+
+Every task is configured with the following defaults:
+
+```python
+"retries":           2,
+"retry_delay":       timedelta(minutes=5),
+"email_on_failure":  True,
+"execution_timeout": timedelta(minutes=30),
+```
+
+When a task fails after exhausting all retries, Airflow automatically sends a failure email containing the DAG name, task name, execution date, and a direct link to the task logs. The `execution_timeout` of 30 minutes acts as a hard kill — if a task hangs (for example, a BigQuery query that never returns), Airflow kills the task after 30 minutes rather than allowing it to hold a worker slot indefinitely.
+
+> `![Failed DAG run](docs/images/failed_dag_run.png)`
+
+> `![Failure email notification](docs/images/failure_email.png)`
+
+---
+
+### Monitoring
+
+The Airflow UI provides the primary monitoring interface:
+
+- **Grid view** — run history with colour-coded task states across all DAG runs
+- **Graph view** — live task dependency graph showing current run state
+- **Task logs** — full stdout and stderr output for every task execution
+- **Email alerts** — automatic failure emails and explicit success notification via `EmailOperator`
+
+> `![DAGs list](docs/images/airflow_dags_list.png)`
+
+> `![Successful DAG run](docs/images/successful_dag_run.png)`
+
+---
+
+### Backfill
+
+The `beejanride_backfill` DAG is designed for reprocessing historical data when something has gone wrong — a bug fixed in a dbt model, a late-arriving Airbyte sync, or a new mart model that needs historical data populated.
+
+It skips Airbyte because the raw data is already in BigQuery. It excludes the snapshot because dbt SCD Type 2 snapshots record current state at execution time and cannot replay historical row states for a given date range.
+
+**Trigger a backfill across a date range:**
+
+```bash
+airflow dags backfill beejanride_backfill \
+    --start-date 2025-04-30 \
+    --end-date   2025-05-02
+```
+
+This creates one DAG run per day in the range. With `max_active_runs=1`, runs execute sequentially — each date completes before the next begins.
+
+> `![Backfill execution](docs/images/backfill_execution.png)`
+
+---
+
+### How Idempotency is Maintained
+
+Idempotency means the pipeline can be run multiple times over the same data and always produce the same result — no duplicates, no data corruption, no side effects from reruns.
+
+Four mechanisms work together to guarantee this:
+
+**1. `max_active_runs=1`**
+Only one DAG run can be active at any time. If a new scheduled run triggers while the previous one is still executing, it queues and waits. This prevents two concurrent runs from writing to the same BigQuery incremental tables simultaneously.
+
+**2. `catchup=False` on the production DAG**
+If the scheduler misses a scheduled run (for example, the server was down), Airflow does not automatically replay all missed runs when it comes back up. Only the next scheduled run executes. This prevents unexpected historical reprocessing.
+
+**3. dbt MERGE strategy on incremental models**
+All incremental models (`trips_metrics`, `fct_trips`, `fct_payments`, `mart_daily_revenue`, `mart_fraud_monitoring`) use a MERGE strategy on their primary key. Re-running the pipeline over data that was already processed updates existing rows rather than inserting duplicates. The same trip processed twice produces one row, not two.
+
+**4. dbt CREATE OR REPLACE on table and view models**
+All dimension tables, full-refresh intermediate models, and staging views use `CREATE OR REPLACE`. These are fully idempotent regardless of how many times they run — the result is always the same complete table.
+
+The backfill DAG intentionally sets `catchup=True` — this is the one controlled exception where historical replay is deliberate and expected. Even here, the MERGE and CREATE OR REPLACE strategies ensure reprocessing the same date range multiple times is safe.
+
+---
+
+*Orchestration built with Apache Airflow 3.1.8 · Airbyte Cloud · dbt-core 1.11.6 · BigQuery*
