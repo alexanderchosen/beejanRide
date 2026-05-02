@@ -7,9 +7,10 @@ models:
   - name: dim_cities
     description: >
       City dimension table
-    meta:
-      owner: data-engineering
-      tags: ['core']
+    config:
+      meta:
+        owner: data-engineering
+        tags: ['core']
     columns:
       - name: city_id
         description: "Primary key — one row per city"
@@ -51,9 +52,10 @@ models:
   - name: dim_drivers
     description: >
       Driver dimension table
-    meta:
-      owner: operations-team
-      tags: ['core', 'operations']
+    config:
+      meta:
+        owner: operations-team
+        tags: ['core', 'operations']
     columns:
       - name: driver_id
         description: "Primary key — one row per driver"
@@ -172,9 +174,10 @@ models:
   - name: dim_riders
     description: >
       Rider dimension table showing current state of all riders.
-    meta:
-      owner: operations-team
-      tags: ['core', 'operations']
+    config:
+      meta:
+        owner: operations-team
+        tags: ['core', 'operations']
     columns:
       - name: rider_id
         description: "Primary key — one row per rider"
@@ -280,9 +283,10 @@ models:
 
   - name: fact_trips
     description: Central trip fact table.
-    meta:
-      owner: data-engineering
-      tags: ['core', 'finance', 'fraud']
+    config:
+      meta:
+        owner: data-engineering
+        tags: ['core', 'finance', 'fraud']
     columns:
       - name: trip_id
         description: "Primary key — one row per trip"
@@ -417,9 +421,10 @@ models:
   - name: fact_payments
     description: >
       Payment event fact table.
-    meta:
-      owner: data-engineering
-      tags: ['core', 'fraud']
+    config:
+      meta:
+        owner: data-engineering
+        tags: ['core', 'fraud']
     columns:
       - name: payment_id
         description: "Primary key — one row per payment event"
@@ -428,13 +433,13 @@ models:
           - unique
 
       - name: trip_id
-        description: "FK to fct_trips"
+        description: "FK to fact_trips"
         data_tests:
           - not_null
           - relationships:
               arguments:
                 field: trip_id
-                to: ref('fct_trips')
+                to: ref('fact_trips')
 
       - name: driver_id
         description: "FK to dim_drivers — inherited from fct_trips"

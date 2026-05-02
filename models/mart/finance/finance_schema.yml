@@ -9,9 +9,10 @@ models:
   - name: daily_revenue_dashboard
     description: >
       Daily revenue time-series aggregated by city for the finance dashboard.
-    meta:
-      owner: finance-team
-      tags: ['finance']
+    config:
+      meta:
+        owner: finance-team
+        tags: ['finance']
     columns:
       - name: trip_date
         description: "Date of trips — part of composite primary key"
@@ -88,9 +89,10 @@ models:
   - name: city_level_profitability
     description: >
       City-level profitability for strategic planning and investment decisions.
-    meta:
-      owner: finance-team
-      tags: ['finance']
+    config:
+      meta:
+        owner: finance-team
+        tags: ['finance']
     columns:
       - name: city_id
         description: "Primary key — one row per city"

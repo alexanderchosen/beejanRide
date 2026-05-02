@@ -8,9 +8,10 @@ models:
   - name: driver_leaderboard
     description: >
       Driver performance leaderboard for the operations team.
-    meta:
-      owner: operations-team
-      tags: ['operations']
+    config:
+      meta:
+        owner: operations-team
+        tags: ['operations']
     columns:
       - name: driver_id
         description: "Primary key — one row per driver"
@@ -95,9 +96,10 @@ models:
   - name: rider_ltv_analysis
     description: >
       Rider lifetime value analysis for the operations team.
-    meta:
-      owner: operations-team
-      tags: ['operations']
+    config:
+      meta:
+        owner: operations-team
+        tags: ['operations']
     columns:
       - name: rider_id
         description: "Primary key — one row per rider"

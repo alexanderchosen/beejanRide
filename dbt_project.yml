@@ -51,7 +51,8 @@ models:
 
 snapshots:
   beejanRide:
-    +target_schema: driver_snapshots
+    +target_schema: snapshots
+    +strategy: timestamp
     +invalidate_hard_deletes: true
 
 seeds:

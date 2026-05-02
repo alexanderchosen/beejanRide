@@ -1,7 +1,7 @@
 version: 2
 sources:
     - name: beejanride
-      description: Raw Postgres data ingested via Airbyte
+      description: Raw Postgres data ingested via Airbyte using airflow for orchestration
       database: beejanride-488715
       schema: beejanride_488715_beejanRide_dataset
       tables:

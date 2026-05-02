@@ -1,5 +1,5 @@
 -- Grain: 1 row per trip
--- Incremental on updated_at: captures both new trips and status changes on existing trips
+
 
 -- I implemented the macros here
 

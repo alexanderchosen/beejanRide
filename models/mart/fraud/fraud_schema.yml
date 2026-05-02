@@ -6,9 +6,10 @@ models:
   # Grain: 1 row per trip
   - name: payment_rel_report
     description: "Payment reliability report for the fraud team."
-    meta:
-      owner: fraud-team
-      tags: ['fraud']
+    config:
+      meta:
+        owner: fraud-team
+        tags: ['fraud']
     columns:
       - name: trip_id
         description: "Primary key — one row per trip"
@@ -140,9 +141,10 @@ models:
 
   - name: fraud_monitor
     description: "Live fraud monitoring feed for the fraud team."
-    meta:
-      owner: fraud-team
-      tags: ['fraud']
+    config:
+      meta:
+        owner: fraud-team
+        tags: ['fraud']
     columns:
       - name: trip_id
         description: "Primary key — one row per flagged trip"
