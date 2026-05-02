@@ -788,9 +788,8 @@ Every task is configured with the following defaults:
 
 When a task fails after exhausting all retries, Airflow automatically sends a failure email containing the DAG name, task name, execution date, and a direct link to the task logs. The `execution_timeout` of 30 minutes acts as a hard kill — if a task hangs (for example, a BigQuery query that never returns), Airflow kills the task after 30 minutes rather than allowing it to hold a worker slot indefinitely.
 
-> `![Failed DAG run](docs/images/failed_dag_run.png)`
+> `![Failed DAG run](docs/images/dbt_run_snapshot failure.png)`
 
-> `![Failure email notification](docs/images/failure_email.png)`
 
 ---
 
@@ -803,9 +802,9 @@ The Airflow UI provides the primary monitoring interface:
 - **Task logs** — full stdout and stderr output for every task execution
 - **Email alerts** — automatic failure emails and explicit success notification via `EmailOperator`
 
-> `![DAGs list](docs/images/airflow_dags_list.png)`
-
-> `![Successful DAG run](docs/images/successful_dag_run.png)`
+> `![Grid View](docs/images/beejan_dag1.png)`
+> `![Graph View](docs/images/beejan_dag2.png)`
+> `![Successful DAG run](docs/images/beejan-successful-dag.png)`
 
 ---
 
@@ -825,7 +824,7 @@ airflow dags backfill beejanride_backfill \
 
 This creates one DAG run per day in the range. With `max_active_runs=1`, runs execute sequentially — each date completes before the next begins.
 
-> `![Backfill execution](docs/images/backfill_execution.png)`
+> `![Backfill execution](docs/images/beejan_backfill_dag.png)`
 
 ---
 
